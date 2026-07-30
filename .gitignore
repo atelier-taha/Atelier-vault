@@ -1,0 +1,14 @@
+# Build directory (ignores build/ and all auto-generated CMake files inside it)
+build/
+
+# VS Code local configuration settings
+.vscode/
+
+# Executables & compiled binaries
+password_manager
+main
+
+# Encrypted vault data files
+*.dat
+*.bin
+vault.dat
