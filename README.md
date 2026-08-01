@@ -1,4 +1,4 @@
-# Kryptos C++ Password Manager
+# Atelier's Vault C++ Password Manager
 
 A lightweight, terminal-based password manager written in C++17. Designed with a security-first approach, it features memory safety practices, modern key derivation, and authenticated binary file encryption.
 
