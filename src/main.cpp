@@ -1,20 +1,27 @@
 #include <QApplication>
+#include <QIcon>
 #include "mainwindow.h"
 #include "crypto.h"
 
 int main(int argc, char* argv[])
 {
-    // Initialize Libsodium cryptographic engine
     bool cryptoStatus = Crypto::initializeCrypto();
     if (!cryptoStatus)
     {
         return 1;
     }
 
-    // Initialize Qt Application event loop
     QApplication applicationInstance(argc, argv);
 
-    // Instantiate and show the MainWindow GUI
+    // Set Application Name for consistent AppData paths across platforms
+    QApplication::setApplicationName("AtelierVault");
+
+    // Set Desktop Entry Name so Wayland/GNOME maps it cleanly to dock
+    QApplication::setDesktopFileName("AtelierVault");
+
+    // Load compiled-in Qt Resource icon
+    applicationInstance.setWindowIcon(QIcon(":/icon.png"));
+
     MainWindow mainApplicationWindow;
     mainApplicationWindow.show();
 

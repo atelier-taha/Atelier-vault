@@ -6,21 +6,12 @@ using namespace std;
 
 namespace Crypto {
 
-    // This function starts up libsodium and checks if your computer hardware supports AES encryption
+    // This function starts up libsodium
     bool initializeCrypto() {
-        int initResult = 0;
-        initResult = sodium_init();
+        int initResult = sodium_init();
 
         if (initResult < 0) {
             cout << "[!] Error: Libsodium library failed to initialize." << endl;
-            return false;
-        }
-
-        int hardwareSupport = 0;
-        hardwareSupport = crypto_aead_aes256gcm_is_available();
-
-        if (hardwareSupport == 0) {
-            cout << "[!] Error: AES-256-GCM hardware acceleration is not available on this CPU." << endl;
             return false;
         }
 
@@ -34,7 +25,9 @@ namespace Crypto {
         return saltBuffer;
     }
 
-    // This function creates a random nonce byte array needed for AES-GCM encryption
+    // This function creates a random 192-bit (24-byte) nonce byte array needed for XChaCha20-Poly1305 encryption.
+    // Libsodium's randombytes_buf utilizes a cryptographically secure pseudo-random number generator (CSPRNG).
+    // A 192-bit nonce is safe against collision even with random generation across vast numbers of operations.
     vector<unsigned char> generateNonce() {
         vector<unsigned char> nonceBuffer(NonceLength);
         randombytes_buf(nonceBuffer.data(), nonceBuffer.size());
@@ -70,7 +63,7 @@ namespace Crypto {
         return derivedKey;
     }
 
-    // This function encrypts sensitive plaintext data using AES-256-GCM encryption
+    // This function encrypts sensitive plaintext data using XChaCha20-Poly1305-IETF authenticated encryption
     vector<unsigned char> encryptVault(const vector<unsigned char>& plainText, const vector<unsigned char>& secretKey, const vector<unsigned char>& nonce) {
         if (secretKey.size() != KeyLength) {
             cout << "[!] Error: Secret key size is invalid." << endl;
@@ -85,8 +78,7 @@ namespace Crypto {
         vector<unsigned char> cipherText(plainText.size() + MacLength);
         unsigned long long ciphertextLength = 0;
 
-        int encryptionStatus = 0;
-        encryptionStatus = crypto_aead_aes256gcm_encrypt(
+        int encryptionStatus = crypto_aead_xchacha20poly1305_ietf_encrypt(
             cipherText.data(),
             &ciphertextLength,
             plainText.data(),
@@ -100,14 +92,14 @@ namespace Crypto {
 
         if (encryptionStatus != 0) {
             cout << "[!] Error: Encryption failed." << endl;
-            throw runtime_error("AES-256-GCM encryption failed.");
+            throw runtime_error("XChaCha20-Poly1305 encryption failed.");
         }
 
         cipherText.resize(ciphertextLength);
         return cipherText;
     }
 
-    // This function decrypts the ciphertext using AES-256-GCM and verifies that data was not tampered with
+    // This function decrypts the ciphertext using XChaCha20-Poly1305-IETF and verifies that data was not tampered with
     vector<unsigned char> decryptVault(const vector<unsigned char>& cipherText, const vector<unsigned char>& secretKey, const vector<unsigned char>& nonce) {
         if (secretKey.size() != KeyLength) {
             cout << "[!] Error: Secret key size is invalid." << endl;
@@ -127,8 +119,7 @@ namespace Crypto {
         vector<unsigned char> decryptedText(cipherText.size() - MacLength);
         unsigned long long decryptedLength = 0;
 
-        int decryptionStatus = 0;
-        decryptionStatus = crypto_aead_aes256gcm_decrypt(
+        int decryptionStatus = crypto_aead_xchacha20poly1305_ietf_decrypt(
             decryptedText.data(),
             &decryptedLength,
             nullptr,
@@ -152,8 +143,15 @@ namespace Crypto {
 
     // This function securely clears sensitive passwords and keys from RAM memory
     void secureClean(vector<unsigned char>& sensitiveData) {
-        if (sensitiveData.empty() == false) {
+        if (!sensitiveData.empty()) {
             sodium_memzero(sensitiveData.data(), sensitiveData.size());
+            sensitiveData.clear();
+        }
+    }
+
+    void secureClean(string& sensitiveData) {
+        if (!sensitiveData.empty()) {
+            sodium_memzero(&sensitiveData[0], sensitiveData.size());
             sensitiveData.clear();
         }
     }

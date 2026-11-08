@@ -1,5 +1,9 @@
 # Build directory (ignores build/ and all auto-generated CMake files inside it)
 build/
+build-win64/
+build-linux/
+out/
+.vs/
 
 # VS Code local configuration settings
 .vscode/

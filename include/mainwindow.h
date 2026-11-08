@@ -2,60 +2,23 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QDialog>
 #include <QStackedWidget>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QLabel>
+#include <QComboBox>
 #include <QVBoxLayout>
 #include <QString>
+#include <QByteArray>
 #include <vector>
 #include <string>
+
+class QTimer;
 
 #include "crypto.h"
 #include "vault.h"
 #include "loginview.h"
-
-// ============================================================
-// AddCredentialDialog
-// ============================================================
-class AddCredentialDialog : public QDialog
-{
-    Q_OBJECT
-public:
-    explicit AddCredentialDialog(QWidget* parentWidget = nullptr);
-    QString getWebsiteName() const;
-    QString getUserName() const;
-    QString getUserPassword() const;
-private:
-    QLineEdit* websiteNameInput;
-    QLineEdit* userNameInput;
-    QLineEdit* userPasswordInput;
-    QPushButton* saveButton;
-    QPushButton* cancelButton;
-    void setupUi();
-};
-
-// ============================================================
-// ChangePasswordDialog
-// ============================================================
-class ChangePasswordDialog : public QDialog
-{
-    Q_OBJECT
-public:
-    explicit ChangePasswordDialog(QWidget* parentWidget = nullptr);
-    QString getOldPassword() const;
-    QString getNewPassword() const;
-private slots:
-    void validateAndAccept();
-private:
-    QLineEdit* oldPasswordInput;
-    QLineEdit* newPasswordInput;
-    QLineEdit* confirmPasswordInput;
-    QPushButton* saveButton;
-    QPushButton* cancelButton;
-    void setupUi();
-};
+#include "dialogs.h"
 
 // ============================================================
 // MainWindow
@@ -70,11 +33,15 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* closeEventPointer) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
-    void onUnlockRequested(const std::string& masterPassword);
+    void onUnlockRequested(const QString& vaultName, const std::string& masterPassword);
+    void onCreateVaultRequested(const QString& vaultName, const std::string& masterPassword);
+    void onVaultSwitchSelected(int index);
     void onLockButtonClicked();
     void onAddCredentialButtonClicked();
+    void onGeneratePasswordButtonClicked();
     void onChangePasswordClicked();
     void onSearchTextChanged(const QString& searchText);
     void onSortButtonClicked();
@@ -88,8 +55,10 @@ private:
     QWidget* vaultView;
 
     // --- Vault view widgets ---
+    QComboBox* vaultSwitcher;
     QLineEdit* searchBar;
     QPushButton* addCredentialButton;
+    QPushButton* generatePasswordButton;
     QPushButton* lockVaultButton;
     QPushButton* changePasswordButton;
     QPushButton* sortButton;
@@ -98,12 +67,18 @@ private:
     QVBoxLayout* credentialsListLayout;
     QLabel* statsTextLabel;
 
+    // --- Security Timers & State ---
+    QTimer* inactivityTimer;
+    QByteArray lastCopiedHash;
+
     // --- In-memory sensitive state ---
     std::vector<unsigned char> derivedKey;
     std::vector<unsigned char> vaultSalt;
     std::vector<unsigned char> vaultNonce;
     std::vector<unsigned char> vaultCipherText;
     std::vector<Credential> currentCredentials;
+    
+    QString activeVaultName;
     std::string vaultFilePath;
     
     bool isVaultUnlocked;
@@ -112,15 +87,21 @@ private:
     // --- UI construction helpers ---
     void setupUi();
     QWidget* buildVaultView();
-    QWidget* createCredentialRow(const QString& website, const QString& url, const QString& username, const QString& password, const QString& category, const QString& iconStr);
+    QWidget* createCredentialRow(const Credential& credential);
 
     // --- Business logic helpers ---
-    bool attemptUnlockVault(const std::string& masterPassword, std::string& errorMessage);
+    bool attemptUnlockVault(const QString& vaultName, const std::string& masterPassword, std::string& errorMessage);
+    bool createAndInitializeVault(const QString& vaultName, const std::string& masterPassword, std::string& errorMessage);
     void populateCredentialsTable(const QString& filterText = QString());
     void refreshCredentialsTable();
+    void refreshVaultSwitcher();
     void secureWipeSensitiveState();
-    bool saveCurrentVaultState(); // New helper to write vault changes to disk
-    void deleteCredential(const QString& website, const QString& username);
+    bool saveCurrentVaultState();
+    
+    void editCredential(const std::string& credentialId);
+    void deleteCredential(const std::string& credentialId);
+    void copyWithAutoClear(const QString& text);
+    void openCredentialUrl(const QString& rawUrl);
 };
 
 #endif // MAINWINDOW_H

@@ -1,0 +1,273 @@
+name: Multi-Platform Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================================
+  # Job 1: Build & Package Windows (x64 MSVC)
+  # ============================================================================
+  build-windows:
+    name: Build & Package Windows (x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSVC Developer Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt 6 (MSVC 2022 64-bit)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Download and Configure Libsodium (MSVC x64)
+        shell: pwsh
+        run: |
+          $sodiumUrl = "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-msvc.zip"
+          $zipPath = "$env:TEMP\libsodium-msvc.zip"
+          $extractPath = "$env:TEMP\libsodium-extract"
+
+          Write-Host "Downloading Libsodium MSVC prebuilt binaries..."
+          Invoke-WebRequest -Uri $sodiumUrl -OutFile $zipPath
+
+          Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+          New-Item -ItemType Directory -Force -Path "C:\libsodium" | Out-Null
+
+          if (Test-Path "$extractPath\libsodium") {
+              Copy-Item -Path "$extractPath\libsodium\*" -Destination "C:\libsodium" -Recurse -Force
+          } else {
+              Copy-Item -Path "$extractPath\*" -Destination "C:\libsodium" -Recurse -Force
+          }
+
+          Write-Host "Libsodium installed to C:\libsodium"
+
+      - name: Install Inno Setup via Chocolatey
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Configure CMake (Release)
+        shell: cmd
+        run: |
+          cmake -B out/build/x64-Release -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile Release Target
+        shell: cmd
+        run: |
+          cmake --build out/build/x64-Release --config Release
+
+      - name: Stage Deployment & Create Portable ZIP
+        shell: pwsh
+        run: |
+          $stageDir = "out\dist\AtelierVault"
+          New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+
+          # Copy executable, libsodium DLL, and icons
+          Copy-Item "out\build\x64-Release\AtelierVault.exe" -Destination "$stageDir\AtelierVault.exe" -Force
+          Copy-Item "C:\libsodium\x64\Release\v143\dynamic\libsodium.dll" -Destination "$stageDir\libsodium.dll" -Force
+          if (Test-Path "icon.ico") { Copy-Item "icon.ico" -Destination "$stageDir\icon.ico" -Force }
+          if (Test-Path "icon.png") { Copy-Item "icon.png" -Destination "$stageDir\icon.png" -Force }
+
+          # Run windeployqt
+          windeployqt.exe --release --compiler-runtime --no-translations "$stageDir\AtelierVault.exe"
+
+          # Create Portable ZIP Archive
+          $zipName = "out\dist\AtelierVault-${{ github.ref_name }}-Windows-x64-Portable.zip"
+          Compress-Archive -Path $stageDir -DestinationPath $zipName -Force
+          Write-Host "Created portable archive: $zipName"
+
+      - name: Compile Installer with Inno Setup (ISCC)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+              $iscc = "iscc.exe"
+          }
+          & $iscc "/Oout\dist" "/FAtelierVault_Setup_${{ github.ref_name }}" "installer\AtelierVault_Setup.iss"
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            out/dist/AtelierVault_Setup_${{ github.ref_name }}.exe
+            out/dist/AtelierVault-${{ github.ref_name }}-Windows-x64-Portable.zip
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 2: Build & Package Linux (x86_64 AppImage)
+  # ============================================================================
+  build-linux:
+    name: Build & Package Linux (AppImage)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libsodium-dev \
+            libgl1-mesa-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libfuse2 \
+            file \
+            desktop-file-utils
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'linux_gcc_64'
+          cache: true
+
+      - name: Configure and Build Project (Release)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      - name: Download linuxdeploy and Qt Plugin
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+
+      - name: Bundle Application into AppImage
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+
+          cp build/AtelierVault AppDir/usr/bin/AtelierVault
+          cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/ateliervault.png
+
+          printf "[Desktop Entry]\nType=Application\nName=Atelier's Vault\nComment=Secure Password Manager\nExec=AtelierVault\nIcon=ateliervault\nCategories=Utility;Security;\nTerminal=false\n" > AppDir/usr/share/applications/ateliervault.desktop
+
+          export QMAKE="$(which qmake6 || which qmake)"
+          export EXTRA_QT_PLUGINS="iconengines;wayland-decoration-client;wayland-graphics-integration-client;wayland-shell-integration"
+          export LDAI_OUTPUT="AtelierVault-${{ github.ref_name }}-x86_64.AppImage"
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appimage-extract-and-run \
+            --appdir AppDir \
+            -e AppDir/usr/bin/AtelierVault \
+            -i AppDir/usr/share/icons/hicolor/256x256/apps/ateliervault.png \
+            -d AppDir/usr/share/applications/ateliervault.desktop \
+            --plugin qt \
+            --output appimage
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: AtelierVault-${{ github.ref_name }}-x86_64.AppImage
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 3: Build & Package macOS (Apple Silicon)
+  # ============================================================================
+  build-macos:
+    name: Build & Package macOS (ARM64)
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies via Homebrew
+        run: |
+          brew install cmake ninja pkg-config libsodium
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          cache: true
+
+      - name: Configure and Build CMake (MACOSX_BUNDLE)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      - name: Deploy Qt Frameworks & Package macOS Bundle
+        run: |
+          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:/usr/local/lib:${DYLD_LIBRARY_PATH}"
+          macdeployqt build/AtelierVault.app -always-overwrite -dmg
+
+          # Move generated DMG to versioned release name
+          if [ -f "build/AtelierVault.dmg" ]; then
+            mv build/AtelierVault.dmg "AtelierVault-${{ github.ref_name }}-macOS.dmg"
+          fi
+
+          # Also produce a clean distributable ZIP of the .app bundle
+          ditto -c -k --sequesterRsrc --keepParent build/AtelierVault.app "AtelierVault-${{ github.ref_name }}-macOS.zip"
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            AtelierVault-${{ github.ref_name }}-macOS.dmg
+            AtelierVault-${{ github.ref_name }}-macOS.zip
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 4: Publish GitHub Release
+  # ============================================================================
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download All Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify Downloaded Release Assets
+        run: |
+          ls -lh release-assets/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Atelier's Vault ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            release-assets/AtelierVault_Setup_${{ github.ref_name }}.exe
+            release-assets/AtelierVault-${{ github.ref_name }}-Windows-x64-Portable.zip
+            release-assets/AtelierVault-${{ github.ref_name }}-x86_64.AppImage
+            release-assets/AtelierVault-${{ github.ref_name }}-macOS.dmg
+            release-assets/AtelierVault-${{ github.ref_name }}-macOS.zip
